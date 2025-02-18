@@ -58,7 +58,7 @@ def log_command_execution(command: str, args: List[str], result: str, success: b
         print(f"Error writing to audit log: {e}")
 
 @mcp.tool()
-async def execute_command(command: str, args: Optional[List[str]] = None, ctx: Context = None) -> str:
+async def execute_command(command: str, args: Optional[List[str]] = None, ctx: Context = None) -> Dict[str, Union[str, bool]]:
     """
     Execute a shell command with dynamic approval system.
     
@@ -123,16 +123,42 @@ Please choose an option (1-3):
         
         # Prepare output
         if result.returncode == 0:
-            output = result.stdout
+            output = result.stdout if result.stdout else ""
             success = True
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": output
+                    }
+                ],
+                "isError": False
+            }
         else:
-            output = f"Error: {result.stderr}"
+            output = f"Error: {result.stderr}" if result.stderr else "Command failed with no error message"
             success = False
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": output
+                    }
+                ],
+                "isError": True
+            }
             
         # Log execution
         log_command_execution(command, args, output, success)
         
-        return output
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": output
+                }
+            ],
+            "isError": True
+        }
         
     except subprocess.TimeoutExpired:
         error_msg = "Error: Command timed out after 5 minutes"

@@ -1,6 +1,7 @@
 from mcp.server.fastmcp import FastMCP, Context
-import subprocess
+import asyncio
 from typing import List, Optional, Dict, Union
+import os
 
 # Initialize the MCP server
 mcp = FastMCP("Shell Commander")
@@ -8,75 +9,85 @@ mcp = FastMCP("Shell Commander")
 @mcp.tool()
 async def execute_command(command: str, args: Optional[List[str]] = None, shell: bool = True, timeout: Optional[int] = None) -> Dict[str, List[Dict[str, str]]]:
     """
-    Execute a shell command and return its output.
+    Execute a shell command asynchronously and return its output.
     
     Args:
         command: The command to execute
         args: Optional list of command arguments
         shell: Whether to use shell execution (default: True)
         timeout: Optional timeout in seconds (default: None, meaning no timeout)
-    
-    Returns:
-        Command output or error message
     """
     try:
         # Handle both string and list commands
         if args:
             if shell:
-                # Join command and args into a shell command string
                 cmd = f"{command} {' '.join(args)}"
             else:
-                # Use command and args as a list
                 cmd = [command] + args
         else:
             cmd = command
-            
-        # Execute command with shell interpretation
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,  # No default timeout
-            shell=shell,   # Allow shell interpretation
-            executable='/bin/bash' if shell else None  # Use bash for shell commands
-        )
-        
-        # Prepare the response
-        if result.returncode == 0:
-            output = result.stdout if result.stdout else "Command completed successfully"
-            return {
-                "content": [{
-                    "type": "text",
-                    "text": output
-                }],
-                "isError": False
-            }
+
+        # Create and run the process asynchronously
+        if shell:
+            process = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
         else:
-            error_msg = f"Error: {result.stderr}" if result.stderr else "Command failed with no error message"
+            process = await asyncio.create_subprocess_exec(
+                command,
+                *args if args else [],
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+        try:
+            # Wait for the process to complete with optional timeout
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=timeout
+            )
+            
+            # Decode output
+            stdout_str = stdout.decode('utf-8') if stdout else ""
+            stderr_str = stderr.decode('utf-8') if stderr else ""
+            
+            # Check return code
+            if process.returncode == 0:
+                return {
+                    "content": [{
+                        "type": "text",
+                        "text": stdout_str if stdout_str else "Command completed successfully"
+                    }],
+                    "isError": False
+                }
+            else:
+                return {
+                    "content": [{
+                        "type": "text",
+                        "text": f"Error: {stderr_str}" if stderr_str else "Command failed with no error message"
+                    }],
+                    "isError": True
+                }
+                
+        except asyncio.TimeoutError:
+            # Try to terminate the process if it times out
+            try:
+                process.terminate()
+                await asyncio.sleep(0.1)
+                process.kill()
+            except:
+                pass
+                
             return {
                 "content": [{
                     "type": "text",
-                    "text": error_msg
+                    "text": f"Error: Command timed out after {timeout} seconds"
                 }],
                 "isError": True
             }
             
-    except subprocess.TimeoutExpired:
-        return {
-            "content": [{
-                "type": "text",
-                "text": f"Error: Command timed out after {timeout} seconds"
-            }],
-            "isError": True
-        }
-    except subprocess.SubprocessError as e:
-        return {
-            "content": [{
-                "type": "text",
-                "text": f"Execution Error: {str(e)}"
-            }],
-            "isError": True
-        }
     except Exception as e:
         return {
             "content": [{
@@ -97,9 +108,15 @@ async def run_in_venv(venv_path: str, command: str, timeout: Optional[int] = Non
         timeout: Optional timeout in seconds (default: None, meaning no timeout)
     """
     # Construct the command to activate venv and run command
-    activation_command = f"source {venv_path}/bin/activate && {command}"
+    # Use the full path to activate script
+    activation_command = f"source {os.path.join(venv_path, 'bin', 'activate')} && {command}"
     
     return await execute_command("/bin/bash", ["-c", activation_command], timeout=timeout)
+
+@mcp.resource("process://status")
+def get_process_status() -> str:
+    """Resource that provides status of currently running processes."""
+    return "Process status information"
 
 if __name__ == "__main__":
     mcp.run()

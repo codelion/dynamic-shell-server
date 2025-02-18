@@ -50,7 +50,7 @@ python dynamic_shell_server.py
 {
     "mcpServers": {
         "shell": {
-            "command": "python",
+            "command": "/absolute/path/to/.venv/bin/python",
             "args": ["/absolute/path/to/dynamic_shell_server.py"]
         }
     }
